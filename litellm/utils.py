@@ -484,7 +484,7 @@ def load_credentials_from_list(kwargs: dict):
 
 
 def get_dynamic_callbacks(
-    dynamic_callbacks: Optional[List[Union[str, Callable, CustomLogger]]]
+    dynamic_callbacks: Optional[List[Union[str, Callable, CustomLogger]]],
 ) -> List:
     returned_callbacks = litellm.callbacks.copy()
     if dynamic_callbacks:
@@ -1593,7 +1593,13 @@ def encode(model="", text="", custom_tokenizer: Optional[dict] = None):
     return enc
 
 
-def decode(model="", tokens: List[int] = [], custom_tokenizer: Optional[dict] = None):
+def decode(
+    model="",
+    tokens: Optional[List[int]] = None,
+    custom_tokenizer: Optional[dict] = None,
+):
+    if tokens is None:
+        tokens = []
     tokenizer_json = custom_tokenizer or _select_tokenizer(model=model)
     dec = tokenizer_json["tokenizer"].decode(tokens)
     return dec
@@ -3225,7 +3231,7 @@ def get_optional_params(  # noqa: PLR0915
             ),
         )
     elif custom_llm_provider == "huggingface":
-        optional_params = litellm.HuggingFaceChatConfig().map_openai_params(
+        optional_params = litellm.HuggingfaceConfig().map_openai_params(
             non_default_params=non_default_params,
             optional_params=optional_params,
             model=model,
@@ -3376,6 +3382,7 @@ def get_optional_params(  # noqa: PLR0915
                     if drop_params is not None and isinstance(drop_params, bool)
                     else False
                 ),
+                messages=messages,
             )
 
         elif "anthropic" in bedrock_base_model and bedrock_route == "invoke":
@@ -3718,17 +3725,6 @@ def get_optional_params(  # noqa: PLR0915
                     else False
                 ),
             )
-    elif provider_config is not None:
-        optional_params = provider_config.map_openai_params(
-            non_default_params=non_default_params,
-            optional_params=optional_params,
-            model=model,
-            drop_params=(
-                drop_params
-                if drop_params is not None and isinstance(drop_params, bool)
-                else False
-            ),
-        )
     else:  # assume passing in params for openai-like api
         optional_params = litellm.OpenAILikeChatConfig().map_openai_params(
             non_default_params=non_default_params,
@@ -5372,10 +5368,10 @@ def _calculate_retry_after(
 # custom prompt helper function
 def register_prompt_template(
     model: str,
-    roles: dict = {},
+    roles: Optional[dict] = None,
     initial_prompt_value: str = "",
     final_prompt_value: str = "",
-    tokenizer_config: dict = {},
+    tokenizer_config: Optional[dict] = None,
 ):
     """
     Register a prompt template to follow your custom format for a given model
@@ -5412,6 +5408,10 @@ def register_prompt_template(
     )
     ```
     """
+    if tokenizer_config is None:
+        tokenizer_config = {}
+    if roles is None:
+        roles = {}
     complete_model = model
     potential_models = [complete_model]
     try:
@@ -6122,8 +6122,6 @@ def validate_and_fix_openai_messages(messages: List):
     for message in messages:
         if not message.get("role"):
             message["role"] = "assistant"
-        if message.get("tool_calls"):
-            message["tool_calls"] = jsonify_tools(tools=message["tool_calls"])
     return validate_chat_completion_messages(messages=messages)
 
 
@@ -6181,7 +6179,7 @@ def validate_chat_completion_user_messages(messages: List[AllMessageValues]):
 
 
 def validate_chat_completion_tool_choice(
-    tool_choice: Optional[Union[dict, str]]
+    tool_choice: Optional[Union[dict, str]],
 ) -> Optional[Union[dict, str]]:
     """
     Confirm the tool choice is passed in the OpenAI format.
@@ -6212,7 +6210,7 @@ class ProviderConfigManager:
     @staticmethod
     def get_provider_chat_config(  # noqa: PLR0915
         model: str, provider: LlmProviders
-    ) -> Optional[BaseConfig]:
+    ) -> BaseConfig:
         """
         Returns the provider config for a given provider.
         """
@@ -6243,22 +6241,9 @@ class ProviderConfigManager:
             return litellm.AnthropicConfig()
         elif litellm.LlmProviders.ANTHROPIC_TEXT == provider:
             return litellm.AnthropicTextConfig()
-        elif litellm.LlmProviders.VERTEX_AI_BETA == provider:
-            return litellm.VertexGeminiConfig()
         elif litellm.LlmProviders.VERTEX_AI == provider:
-            if "gemini" in model:
-                return litellm.VertexGeminiConfig()
-            elif "claude" in model:
+            if "claude" in model:
                 return litellm.VertexAIAnthropicConfig()
-            elif model in litellm.vertex_mistral_models:
-                if "codestral" in model:
-                    return litellm.CodestralTextCompletionConfig()
-                else:
-                    return litellm.MistralConfig()
-            elif model in litellm.vertex_ai_ai21_models:
-                return litellm.VertexAIAi21Config()
-            else:  # use generic openai-like param mapping
-                return litellm.VertexAILlama3Config()
         elif litellm.LlmProviders.CLOUDFLARE == provider:
             return litellm.CloudflareChatConfig()
         elif litellm.LlmProviders.SAGEMAKER_CHAT == provider:
@@ -6281,6 +6266,7 @@ class ProviderConfigManager:
             litellm.LlmProviders.CUSTOM == provider
             or litellm.LlmProviders.CUSTOM_OPENAI == provider
             or litellm.LlmProviders.OPENAI_LIKE == provider
+            or litellm.LlmProviders.LITELLM_PROXY == provider
         ):
             return litellm.OpenAILikeChatConfig()
         elif litellm.LlmProviders.AIOHTTP_OPENAI == provider:
@@ -6294,7 +6280,7 @@ class ProviderConfigManager:
         elif litellm.LlmProviders.REPLICATE == provider:
             return litellm.ReplicateConfig()
         elif litellm.LlmProviders.HUGGINGFACE == provider:
-            return litellm.HuggingFaceChatConfig()
+            return litellm.HuggingfaceConfig()
         elif litellm.LlmProviders.TOGETHER_AI == provider:
             return litellm.TogetherAIConfig()
         elif litellm.LlmProviders.OPENROUTER == provider:
@@ -6385,15 +6371,9 @@ class ProviderConfigManager:
                 return litellm.AmazonMistralConfig()
             elif bedrock_invoke_provider == "deepseek_r1":  # deepseek models on bedrock
                 return litellm.AmazonDeepSeekR1Config()
-            elif bedrock_invoke_provider == "nova":
-                return litellm.AmazonInvokeNovaConfig()
             else:
                 return litellm.AmazonInvokeConfig()
-        elif litellm.LlmProviders.LITELLM_PROXY == provider:
-            return litellm.LiteLLMProxyChatConfig()
-        elif litellm.LlmProviders.OPENAI == provider:
-            return litellm.OpenAIGPTConfig()
-        return None
+        return litellm.OpenAIGPTConfig()
 
     @staticmethod
     def get_provider_embedding_config(
@@ -6735,20 +6715,3 @@ def return_raw_request(endpoint: CallTypes, kwargs: dict) -> RawRequestTypedDict
         return RawRequestTypedDict(
             error=received_exception,
         )
-
-
-def jsonify_tools(tools: List[Any]) -> List[Dict]:
-    """
-    Fixes https://github.com/BerriAI/litellm/issues/9321
-
-    Where user passes in a pydantic base model
-    """
-    new_tools: List[Dict] = []
-    for tool in tools:
-        if isinstance(tool, BaseModel):
-            tool = tool.model_dump(exclude_none=True)
-        elif isinstance(tool, dict):
-            tool = tool.copy()
-        if isinstance(tool, dict):
-            new_tools.append(tool)
-    return new_tools

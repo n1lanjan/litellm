@@ -182,7 +182,9 @@ class Router:
         redis_port: Optional[int] = None,
         redis_password: Optional[str] = None,
         cache_responses: Optional[bool] = False,
-        cache_kwargs: dict = {},  # additional kwargs to pass to RedisCache (see caching.py)
+        cache_kwargs: Optional[
+            dict
+        ] = None,  # additional kwargs to pass to RedisCache (see caching.py)
         caching_groups: Optional[
             List[tuple]
         ] = None,  # if you want to cache across model groups
@@ -206,9 +208,9 @@ class Router:
         default_fallbacks: Optional[
             List[str]
         ] = None,  # generic fallbacks, works across all deployments
-        fallbacks: List = [],
-        context_window_fallbacks: List = [],
-        content_policy_fallbacks: List = [],
+        fallbacks: Optional[List] = None,
+        context_window_fallbacks: Optional[List] = None,
+        content_policy_fallbacks: Optional[List] = None,
         model_group_alias: Optional[
             Dict[str, Union[str, RouterModelGroupAliasItem]]
         ] = {},
@@ -317,6 +319,13 @@ class Router:
 
         from litellm._service_logger import ServiceLogging
 
+        if fallbacks is None:
+            fallbacks = []
+        if context_window_fallbacks is None:
+            context_window_fallbacks = []
+        if content_policy_fallbacks is None:
+            content_policy_fallbacks = []
+
         self.set_verbose = set_verbose
         self.debug_level = debug_level
         self.enable_pre_call_checks = enable_pre_call_checks
@@ -360,7 +369,8 @@ class Router:
                 cache_config["password"] = redis_password
 
             # Add additional key-value pairs from cache_kwargs
-            cache_config.update(cache_kwargs)
+            if cache_kwargs is not None:
+                cache_config.update(cache_kwargs)
             redis_cache = self._create_redis_cache(cache_config)
 
         if cache_responses:
@@ -617,7 +627,7 @@ class Router:
 
     @staticmethod
     def _create_redis_cache(
-        cache_config: Dict[str, Any]
+        cache_config: Dict[str, Any],
     ) -> Union[RedisCache, RedisClusterCache]:
         """
         Initializes either a RedisCache or RedisClusterCache based on the cache_config.

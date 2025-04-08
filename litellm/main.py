@@ -141,7 +141,7 @@ from .llms.custom_llm import CustomLLM, custom_chat_llm_router
 from .llms.databricks.embed.handler import DatabricksEmbeddingHandler
 from .llms.deprecated_providers import aleph_alpha, palm
 from .llms.groq.chat.handler import GroqChatCompletion
-from .llms.huggingface.embedding.handler import HuggingFaceEmbedding
+from .llms.huggingface.chat.handler import Huggingface
 from .llms.nlp_cloud.chat.handler import completion as nlp_cloud_chat_completion
 from .llms.ollama.completion import handler as ollama
 from .llms.oobabooga.chat import oobabooga
@@ -221,7 +221,7 @@ azure_chat_completions = AzureChatCompletion()
 azure_o1_chat_completions = AzureOpenAIO1ChatCompletion()
 azure_text_completions = AzureTextCompletion()
 azure_audio_transcriptions = AzureAudioTranscription()
-huggingface_embed = HuggingFaceEmbedding()
+huggingface = Huggingface()
 predibase_chat_completions = PredibaseChatCompletion()
 codestral_text_completions = CodestralTextCompletion()
 bedrock_converse_chat_completion = BedrockConverseLLM()
@@ -313,7 +313,7 @@ class AsyncCompletions:
 async def acompletion(
     model: str,
     # Optional OpenAI params: see https://platform.openai.com/docs/api-reference/chat/create
-    messages: List = [],
+    messages: Optional[List] = None,
     functions: Optional[List] = None,
     function_call: Optional[str] = None,
     timeout: Optional[Union[float, int]] = None,
@@ -398,6 +398,8 @@ async def acompletion(
     fallbacks = kwargs.get("fallbacks", None)
     mock_timeout = kwargs.get("mock_timeout", None)
 
+    if messages is None:
+        messages = []
     if mock_timeout is True:
         await _handle_mock_timeout_async(mock_timeout, timeout, model)
 
@@ -778,7 +780,7 @@ def mock_completion(
 def completion(  # type: ignore # noqa: PLR0915
     model: str,
     # Optional OpenAI params: see https://platform.openai.com/docs/api-reference/chat/create
-    messages: List = [],
+    messages: Optional[List] = None,
     timeout: Optional[Union[float, str, httpx.Timeout]] = None,
     temperature: Optional[float] = None,
     top_p: Optional[float] = None,
@@ -867,6 +869,8 @@ def completion(  # type: ignore # noqa: PLR0915
     if model is None:
         raise ValueError("model param not passed in.")
     # validate messages
+    if messages is None:
+        messages = []
     messages = validate_and_fix_openai_messages(messages=messages)
     # validate tool_choice
     tool_choice = validate_chat_completion_tool_choice(tool_choice=tool_choice)
@@ -2141,6 +2145,7 @@ def completion(  # type: ignore # noqa: PLR0915
 
             response = model_response
         elif custom_llm_provider == "huggingface":
+            custom_llm_provider = "huggingface"
             huggingface_key = (
                 api_key
                 or litellm.huggingface_key
@@ -2149,23 +2154,40 @@ def completion(  # type: ignore # noqa: PLR0915
                 or litellm.api_key
             )
             hf_headers = headers or litellm.headers
-            response = base_llm_http_handler.completion(
+
+            custom_prompt_dict = custom_prompt_dict or litellm.custom_prompt_dict
+            model_response = huggingface.completion(
                 model=model,
                 messages=messages,
-                headers=hf_headers,
+                api_base=api_base,  # type: ignore
+                headers=hf_headers or {},
                 model_response=model_response,
-                api_key=huggingface_key,
-                api_base=api_base,
-                acompletion=acompletion,
-                logging_obj=logging,
+                print_verbose=print_verbose,
                 optional_params=optional_params,
                 litellm_params=litellm_params,
+                logger_fn=logger_fn,
+                encoding=encoding,
+                api_key=huggingface_key,
+                acompletion=acompletion,
+                logging_obj=logging,
+                custom_prompt_dict=custom_prompt_dict,
                 timeout=timeout,  # type: ignore
                 client=client,
-                custom_llm_provider=custom_llm_provider,
-                encoding=encoding,
-                stream=stream,
             )
+            if (
+                "stream" in optional_params
+                and optional_params["stream"] is True
+                and acompletion is False
+            ):
+                # don't try to access stream object,
+                response = CustomStreamWrapper(
+                    model_response,
+                    model,
+                    custom_llm_provider="huggingface",
+                    logging_obj=logging,
+                )
+                return response
+            response = model_response
         elif custom_llm_provider == "oobabooga":
             custom_llm_provider = "oobabooga"
             model_response = oobabooga.completion(
@@ -3605,7 +3627,7 @@ def embedding(  # noqa: PLR0915
                 or get_secret("HUGGINGFACE_API_KEY")
                 or litellm.api_key
             )  # type: ignore
-            response = huggingface_embed.embedding(
+            response = huggingface.embedding(
                 model=model,
                 input=input,
                 encoding=encoding,  # type: ignore

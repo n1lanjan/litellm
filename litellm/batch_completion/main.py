@@ -11,7 +11,7 @@ from ..llms.vllm.completion import handler as vllm_handler
 def batch_completion(
     model: str,
     # Optional OpenAI params: see https://platform.openai.com/docs/api-reference/chat/create
-    messages: List = [],
+    messages: Optional[List] = None,
     functions: Optional[List] = None,
     function_call: Optional[str] = None,
     temperature: Optional[float] = None,
@@ -57,6 +57,9 @@ def batch_completion(
         list: A list of completion results.
     """
     args = locals()
+
+    if messages is None:
+        messages = []
 
     batch_messages = messages
     completions = []
